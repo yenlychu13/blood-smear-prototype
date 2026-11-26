@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Blood Smear Prototype</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#efeceb;--fg:#1c1819;--mut:#6a6264;--card:#fff;--line:#d6d0d0;--red:#a3141e;--blue:#2b5c8a}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121014;--fg:#ece6e6;--mut:#a69da0;--card:#1c191e;--line:#383238;--red:#d2424d;--blue:#6fa4d6}}
+:root[data-theme="dark"]{--bg:#121014;--fg:#ece6e6;--mut:#a69da0;--card:#1c191e;--line:#383238;--red:#d2424d;--blue:#6fa4d6}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:860px;margin:0 auto;padding:12px}
+h1{font-size:1.15rem;margin:4px 0 2px}
+p{margin:2px 0 8px;color:var(--mut)}
+.hud{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;margin-bottom:8px}
+.bar{height:10px;background:var(--line);border-radius:5px;overflow:hidden}
+.bar i{display:block;height:100%;width:0}
+.lab{display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:2px}
+#st{grid-column:1/-1;font-weight:600;min-height:1.4em}
+canvas{display:block;width:100%;aspect-ratio:8/5;background:#15131a;border:1px solid var(--line);border-radius:8px;touch-action:none}
+.btns{display:flex;gap:8px;margin:10px 0}
+.btns button{flex:1;min-height:52px;font:600 1rem system-ui,sans-serif;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);touch-action:none;user-select:none;-webkit-user-select:none}
+.btns button.on{background:var(--red);color:#fff;border-color:var(--red)}
+.opts{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:.88rem;color:var(--mut);margin:4px 0}
+.opts label{display:flex;gap:6px;align-items:center}
+small{color:var(--mut)}
+</style>
+</head>
+<body>
+<main>
+<h1>Blood Smear prototype</h1>
+<p>Reach the green exit. Hold Smear for 1 s to coat Grace in blood, then slip past the basic infected. The stalker ignores it.</p>
+<div class="hud">
+  <div><div class="lab"><span>Blood</span><span id="bt">0</span></div><div class="bar"><i id="bb" style="background:var(--red)"></i></div></div>
+  <div><div class="lab"><span>Health</span><span id="ht">100</span></div><div class="bar"><i id="hb" style="background:var(--blue)"></i></div></div>
+  <div id="st"></div>
+</div>
+<canvas id="c" width="800" height="500"></canvas>
+<div class="btns">
+  <button id="bs">Smear (hold)</button>
+  <button id="bp">Sprint (hold)</button>
+  <button id="bf">Fire</button>
+  <button id="br">Restart</button>
+</div>
+<div class="opts">
+  <span>Smear breaks on:</span>
+  <label><input type="checkbox" id="k1" checked> sprint</label>
+  <label><input type="checkbox" id="k2" checked> firing</label>
+  <label><input type="checkbox" id="k3" checked> damage</label>
+</div>
+<small>Move: WASD, arrows, or drag on the map. Smear: Space. Sprint: Shift. Fire: F. Restart: R. Walk over dark red corpses to collect blood. Each smear costs 15 blood.</small>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const W=800,H=500,cv=$('c'),g=cv.getContext('2d');
+// Starting values from the design spec (tuning parameters)
+const P={cost:15,dur:25,cd:20,apply:1,rng:.6,spd:.6,lose:.7};
+const keys={},hold={smear:false,sprint:false};let ptr=null,S,last=0;
+const brk=()=>({sprint:$('k1').checked,fire:$('k2').checked,dmg:$('k3').checked});
+
+function mk(x,y,tier,pts){return{x,y,tier,pts,i:1,a:0,mode:'patrol',lost:0,hit:0,fx:1,fy:0}}
+function reset(){S={hp:100,blood:30,x:40,y:250,sm:{m:'ready',p:0,t:0,cd:0},over:null,fx:[],msg:'',mt:0,fcd:0,tm:0,uses:0,
+ cor:[[150,150],[250,400],[420,170],[560,230]].map(c=>({x:c[0],y:c[1],on:1})),
+ en:[mk(300,100,1,[[300,100],[300,400]]),mk(450,300,1,[[450,300],[650,300]]),mk(660,140,1,[[520,120],[700,170]]),mk(600,430,3,[[600,430],[250,430]])]};}
+function say(t){S.msg=t;S.mt=2.2}
+function endSmear(why){if(S.sm.m!=='active')return;S.sm.m='cd';S.sm.cd=P.cd;say(why?'Smear broken: '+why:'Smear faded')}
+function fire(){if(S.over||S.fcd>0)return;S.fcd=.4;S.fx.push({x:S.x,y:S.y,t:0});
+ S.en.forEach(e=>{if(Math.hypot(e.x-S.x,e.y-S.y)<320){e.mode='chase';e.a=1;e.lost=0}});
+ if(brk().fire)endSmear('you fired')}
+
+addEventListener('keydown',e=>{keys[e.code]=1;if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();if(e.code==='KeyF')fire();if(e.code==='KeyR')reset()});
+addEventListener('keyup',e=>{keys[e.code]=0});
+function bindHold(id,k){const b=$(id),on=e=>{e.preventDefault();hold[k]=true;b.classList.add('on')},off=()=>{hold[k]=false;b.classList.remove('on')};
+ b.addEventListener('pointerdown',on);['pointerup','pointercancel','pointerleave'].forEach(t=>b.addEventListener(t,off))}
+bindHold('bs','smear');bindHold('bp','sprint');
+$('bf').addEventListener('pointerdown',e=>{e.preventDefault();fire()});
+$('br').addEventListener('click',reset);
+function pp(e){const r=cv.getBoundingClientRect();return{x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height}}
+cv.addEventListener('pointerdown',e=>{ptr=pp(e);cv.setPointerCapture(e.pointerId)});
+cv.addEventListener('pointermove',e=>{if(ptr)ptr=pp(e)});
+['pointerup','pointercancel'].forEach(t=>cv.addEventListener(t,()=>{ptr=null}));
+
+// Enemy effectiveness: tier 1 full effect, tier 3 none
+const eff=e=>e.tier===1?1:0;
+const mul=(base,e)=>S.sm.m==='active'?1-(1-base)*eff(e):1;
+
+function upd(dt){
+ if(S.over)return;
+ S.tm+=dt;S.mt-=dt;S.fcd-=dt;
+ let dx=(keys.KeyD||keys.ArrowRight?1:0)-(keys.KeyA||keys.ArrowLeft?1:0),dy=(keys.KeyS||keys.ArrowDown?1:0)-(keys.KeyW||keys.ArrowUp?1:0);
+ if(ptr){const vx=ptr.x-S.x,vy=ptr.y-S.y,d=Math.hypot(vx,vy);if(d>12){dx=vx/d;dy=vy/d}}
+ const moving=!!(dx||dy),len=Math.hypot(dx,dy)||1;S.mv=moving;if(dx)S.fl=dx<0;
+ const sprint=moving&&(keys.ShiftLeft||keys.ShiftRight||hold.sprint);
+ const sp=sprint?190:110;
+ S.x=Math.min(W-12,Math.max(12,S.x+dx/len*sp*dt));S.y=Math.min(H-12,Math.max(12,S.y+dy/len*sp*dt));
+ // smear state machine
+ const sm=S.sm,want=keys.Space||hold.smear;
+ if(sm.m==='ready'){
+  if(want&&!sprint){
+   if(S.blood<P.cost){if(S.mt<=0)say('Not enough blood (need '+P.cost+')');sm.p=0}
+   else{sm.p+=dt/P.apply;if(sm.p>=1){S.blood-=P.cost;sm.m='active';sm.t=P.dur;sm.p=0;S.uses++;say('Smear active')}}
+  }else sm.p=0;
+ }else if(sm.m==='active'){sm.t-=dt;if(sm.t<=0)endSmear();}
+ else if(sm.m==='cd'){sm.cd-=dt;if(sm.cd<=0)sm.m='ready'}
+ if(sm.m==='active'&&sprint&&brk().sprint)endSmear('you sprinted');
+ // corpses
+ S.cor.forEach(c=>{if(c.on&&Math.hypot(c.x-S.x,c.y-S.y)<18){c.on=0;S.blood=Math.min(100,S.blood+25);say('+25 blood')}});
+ // enemies
+ S.en.forEach(e=>{
+  const base=e.tier===1?150:190,detT=e.tier===1?2:1.2;
+  const range=base*mul(P.rng,e),dist=Math.hypot(S.x-e.x,S.y-e.y);
+  const ang=Math.atan2(S.y-e.y,S.x-e.x),fa=Math.atan2(e.fy,e.fx);
+  let da=Math.abs(ang-fa);if(da>Math.PI)da=2*Math.PI-da;
+  const seen=dist<range&&(e.mode==='chase'||dist<45||da<1.2);
+  e.hit-=dt;
+  if(e.mode==='patrol'){
+   if(seen){e.a+=dt/detT*mul(P.spd,e);if(e.a>=1){e.mode='chase';e.lost=0}}else e.a=Math.max(0,e.a-dt*.5);
+   const t=e.pts[e.i],vx=t[0]-e.x,vy=t[1]-e.y,d=Math.hypot(vx,vy);
+   if(d<4)e.i=(e.i+1)%e.pts.length;else{e.fx=vx/d;e.fy=vy/d;e.x+=e.fx*45*dt;e.y+=e.fy*45*dt}
+  }else{
+   e.fx=Math.cos(ang);e.fy=Math.sin(ang);
+   e.x+=e.fx*(e.tier===1?92:120)*dt;e.y+=e.fy*(e.tier===1?92:120)*dt;
+   if(seen)e.lost=0;else e.lost+=dt;
+   if(e.lost>4*mul(P.lose,e)){e.mode='patrol';e.a=0;let b=0,bd=1e9;e.pts.forEach((p,i)=>{const d=Math.hypot(p[0]-e.x,p[1]-e.y);if(d<bd){bd=d;b=i}});e.i=b;say('An infected lost track of you')}
+   if(dist<20&&e.hit<=0){e.hit=1.2;S.hp-=e.tier===1?20:35;S.x+=Math.cos(ang)*28;S.y+=Math.sin(ang)*28;if(brk().dmg)endSmear('you were hit');if(S.hp<=0){S.hp=0;S.over='lose'}}
+  }
+ });
+ S.fx.forEach(f=>f.t+=dt);S.fx=S.fx.filter(f=>f.t<.5);
+ if(S.x>735&&S.y>170&&S.y<330)S.over='win';
+}
+
+function circ(x,y,r,fill,stroke,dash,lw){g.beginPath();g.arc(x,y,r,0,7);if(fill){g.fillStyle=fill;g.fill()}if(stroke){g.setLineDash(dash||[]);g.strokeStyle=stroke;g.lineWidth=lw||2;g.stroke();g.setLineDash([])}}
+function rr(x,y,w,h,r,f){g.beginPath();g.roundRect(x,y,w,h,r);g.fillStyle=f;g.fill()}
+function graceIcon(act,ap){
+ const ph=S.mv?Math.sin(S.tm*14):0;
+ g.save();g.translate(S.x,S.y);if(S.fl)g.scale(-1,1);
+ g.fillStyle='rgba(0,0,0,.4)';g.beginPath();g.ellipse(0,16,11,4,0,0,7);g.fill();
+ if(act){g.strokeStyle='rgba(210,50,60,'+(.55+.25*Math.sin(S.tm*6))+')';g.lineWidth=2;g.beginPath();g.ellipse(0,0,15,22,0,0,7);g.stroke()}
+ rr(-6,6+ph*1.5,5,9,2,'#2f3b57');rr(1,6-ph*1.5,5,9,2,'#2f3b57');
+ rr(-7,14+ph*1.5,6,3,1,'#1c1c1c');rr(1,14-ph*1.5,6,3,1,'#1c1c1c');
+ rr(-8,-4,16,13,4,'#b8bcc4');
+ rr(-11,-3,4,9,2,'#f0c9a8');rr(7,-3,4,9,2,'#f0c9a8');
+ if(ap||act){rr(-11,3,4,4,2,'#b3202c');rr(7,3,4,4,2,'#b3202c')}
+ if(act){g.fillStyle='#8f1520';g.beginPath();g.arc(-2,2,3.5,0,7);g.arc(4,5,2.5,0,7);g.fill()}
+ g.fillStyle='#e3be5f';g.beginPath();g.ellipse(0,-10,9.5,10,0,0,7);g.fill();
+ g.fillStyle='#f4d3b4';g.beginPath();g.arc(1,-9,6.5,0,7);g.fill();
+ g.fillStyle='#e3be5f';g.beginPath();g.ellipse(0,-14,8,5,0,Math.PI,0);g.fill();
+ g.fillStyle='#222';g.fillRect(2,-10,1.6,2);g.fillRect(5,-10,1.6,2);
+ g.restore();
+}
+function zombie(e){
+ const t1=e.tier===1,s=t1?1:1.5,ph=Math.sin(S.tm*(e.mode==='chase'?12:6)+e.x);
+ g.save();g.translate(e.x,e.y);g.scale(e.fx<0?-s:s,s);
+ g.fillStyle='rgba(0,0,0,.4)';g.beginPath();g.ellipse(0,16,11,4,0,0,7);g.fill();
+ if(!t1){g.strokeStyle='rgba(255,60,60,.5)';g.lineWidth=2;g.beginPath();g.ellipse(0,0,15,22,0,0,7);g.stroke()}
+ const sk=t1?'#7da36f':'#9a7a86',sh=t1?'#6b5b4a':'#3a2326';
+ rr(-6,6+ph*1.5,5,9,2,t1?'#3d3a44':'#241c1f');rr(1,6-ph*1.5,5,9,2,t1?'#3d3a44':'#241c1f');
+ rr(-8,-4,16,13,3,sh);
+ g.fillStyle=sh;g.beginPath();g.moveTo(-8,9);g.lineTo(-5,13);g.lineTo(-2,9);g.lineTo(1,13);g.lineTo(4,9);g.lineTo(8,13);g.lineTo(8,9);g.fill();
+ rr(5,-3+ph,12,4,2,sk);rr(5,3-ph,12,4,2,sk);
+ g.fillStyle=sk;g.beginPath();g.arc(0,-9,7.5,0,7);g.fill();
+ g.fillStyle=t1?'#3b4a36':'#2a1a20';g.beginPath();g.arc(0,-9,7.5,Math.PI*1.1,Math.PI*1.9);g.fill();
+ g.fillStyle='#ff3030';g.fillRect(1,-10,2.2,2.2);g.fillRect(4.5,-10,2.2,2.2);
+ g.fillStyle='#3a0d0d';g.fillRect(2,-5.5,5,2.5);
+ g.restore();
+}
+function draw(){
+ g.fillStyle='#15131a';g.fillRect(0,0,W,H);
+ g.strokeStyle='#201d27';g.lineWidth=1;for(let x=0;x<W;x+=40){g.beginPath();g.moveTo(x,0);g.lineTo(x,H);g.stroke()}for(let y=0;y<H;y+=40){g.beginPath();g.moveTo(0,y);g.lineTo(W,y);g.stroke()}
+ g.fillStyle='#2f7d4f';g.fillRect(735,170,65,160);g.fillStyle='#d8f0df';g.font='bold 15px system-ui';g.textAlign='center';g.fillText('EXIT',768,255);
+ S.cor.forEach(c=>{if(c.on){circ(c.x,c.y,11,'#5a0f16');circ(c.x+5,c.y+4,6,'#7a1620')}});
+ const act=S.sm.m==='active';
+ S.en.forEach(e=>{
+  const base=e.tier===1?150:190,range=base*mul(P.rng,e);
+  if(act&&eff(e))circ(e.x,e.y,base,null,'#807a86',[5,5],1.5);
+  const col=e.mode==='chase'?'255,70,70':'255,190,60';
+  circ(e.x,e.y,range,'rgba('+col+',.07)','rgba('+col+',.55)',null,1.5);
+  zombie(e);
+  if(e.mode==='patrol'&&e.a>0){const oy=e.tier===1?34:46;g.fillStyle='#000a';g.fillRect(e.x-18,e.y-oy,36,6);g.fillStyle='#ffbe3c';g.fillRect(e.x-17,e.y-oy+1,34*Math.min(1,e.a),4)}
+  if(e.mode==='chase'){g.fillStyle='#ff4646';g.font='bold 20px system-ui';g.textAlign='center';g.fillText('!',e.x,e.y-(e.tier===1?30:42))}
+ });
+ S.fx.forEach(f=>circ(f.x,f.y,f.t*640,null,'rgba(255,255,255,'+(1-f.t*2)+')',null,2));
+ // Grace
+ graceIcon(act,S.sm.m==='ready'&&S.sm.p>0);
+ if(S.sm.m==='ready'&&S.sm.p>0){g.beginPath();g.arc(S.x,S.y,18,-Math.PI/2,-Math.PI/2+S.sm.p*2*Math.PI);g.strokeStyle='#ffbe3c';g.lineWidth=4;g.stroke()}
+ if(S.mt>0){g.fillStyle='#000b';const w=g.measureText(S.msg).width+24;g.font='bold 16px system-ui';const tw=g.measureText(S.msg).width+24;g.fillRect(W/2-tw/2,14,tw,30);g.fillStyle='#fff';g.textAlign='center';g.fillText(S.msg,W/2,35)}
+ if(S.over){g.fillStyle='#000c';g.fillRect(0,0,W,H);g.fillStyle='#fff';g.textAlign='center';g.font='bold 34px system-ui';
+  g.fillText(S.over==='win'?'You made it out':'Grace was caught',W/2,230);g.font='18px system-ui';
+  g.fillText(S.over==='win'?('Time '+S.tm.toFixed(1)+' s, Smears used: '+S.uses):'Press Restart or R to try again',W/2,270)}
+}
+function hud(){
+ $('bt').textContent=Math.floor(S.blood)+'/100';$('bb').style.width=S.blood+'%';
+ $('ht').textContent=S.hp;$('hb').style.width=S.hp+'%';
+ const s=S.sm;let t='Smear: ready (costs '+P.cost+' blood)';
+ if(s.m==='ready'&&s.p>0)t='Applying... '+Math.round(s.p*100)+'%';
+ if(s.m==='active')t='Smear active: '+Math.ceil(s.t)+' s left';
+ if(s.m==='cd')t='Smear cooling down: '+Math.ceil(s.cd)+' s';
+ $('st').textContent=t;
+}
+function loop(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;upd(dt);draw();hud();requestAnimationFrame(loop)}
+reset();requestAnimationFrame(loop);
+</script>
+</body>
+</html>
